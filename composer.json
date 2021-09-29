@@ -1,0 +1,14 @@
+{
+    "name": "root/auto-call",
+    "type": "project",
+    "authors": [
+        {
+            "name": "AskoHost",
+            "email": "sales@asko.host"
+        }
+    ],
+    "require": {
+        "splitbrain/php-cli": "^1.1",
+        "symfony/yaml": "^5.3"
+    }
+}

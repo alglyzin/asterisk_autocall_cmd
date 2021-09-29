@@ -1,0 +1,286 @@
+#!/usr/bin/env php
+<?php
+
+	require_once 'vendor/autoload.php';
+
+	use splitbrain\phpcli\CLI;
+	use splitbrain\phpcli\Colors;
+	use splitbrain\phpcli\Options;
+	use splitbrain\phpcli\TableFormatter;
+	use Symfony\Component\Yaml\Yaml;
+
+	class Minimal extends CLI
+	{
+
+		public array $companies = [];
+		public $queue_nums = [];
+		public int $trunks = 1;
+		public $template;
+		public string $template_path = 'data/templates/';
+		//public $pool_path = 'data/pool';
+		public string $pool_path = '/storage/usbdisk1/mikopbx/astspool/outgoing/';
+		public string $temp_path = 'data/temp/';
+		public string $done_path = 'data/companies/done/';
+		
+        /**
+         * register options and arguments
+         * @param Options $options
+         */
+	    protected function setup(Options $options): void
+	    {
+	        $options->setHelp('Скрипт автообзвона для MikoPBX от Asko.Host');
+	        $options->registerCommand('run', 'Запустить обзвон');
+	        $options->registerCommand('list', 'Список компаний');
+	        $options->registerOption('trunks', 'Количество транков.', 't', 'count');
+	    }
+        
+        /**
+         * implement your code
+         * @param Options $options
+         */
+	    protected function main(Options $options): void
+	    {
+
+	        switch ($options->getCmd()) {
+	            case 'run':
+	                $this->c_run($options);
+	                break;
+	            case 'list':
+	            	$this->c_list();
+	                break;
+	            default:
+	                $this->error('Ни одна известная команда не была вызвана, вместо этого мы показываем справку по умолчанию:');
+	                echo $options->help();
+	                exit;
+	        }
+
+	    }
+
+	    public function c_list(): void
+        {
+
+			$companies = glob("data/companies/list/*.txt");
+		
+			foreach ($companies as $company) {
+
+				$file = new SplFileObject($company, 'r');
+				$file->setFlags(SplFileObject::SKIP_EMPTY | SplFileObject::DROP_NEW_LINE);
+
+				while ($file->current()) {
+					$file->next();
+				}
+
+				$count = $file->key();
+				$name = pathinfo($company, PATHINFO_FILENAME);
+				$basename = pathinfo($company, PATHINFO_BASENAME);
+
+				$this->companies[$name] = [
+					'spl'			=> $file,
+					'count'			=> $count,	// Всего номеров в компании
+					'queue'			=> [],		// В процессе
+					'length'		=> 0,		// Кол-во в процессе
+					'done'			=> 0		// Завершено
+				];
+
+				if(file_exists($this->template_call($name))) {
+
+					$this->companies[$name]['template'] = file_get_contents($this->template_call($name));
+
+					if(file_exists($this->done_path($basename))) {
+						$done_file = new SplFileObject($this->done_path($basename), 'r');
+						$done_file->setFlags(SplFileObject::SKIP_EMPTY | SplFileObject::DROP_NEW_LINE);
+						while ($done_file->current()) {
+							$done_file->next();
+						}
+						$diff = $done_file->key();
+						$this->companies[$name]['done'] = $diff;
+						$file->seek($diff);
+					} else {
+						$file->rewind();
+					}
+
+				} else {
+					$this->error("Для компании $name не нашел шаблон Call файла!");
+				}
+
+				unset($file, $done_file);
+
+			}
+
+	    }
+
+	    public function show_progress(Options $options): void
+        {
+
+	    	system('clear');
+
+	    	$this->trunks = $options->getOpt('trunks') ?? $trunks;
+   			$this->info("Кол-во рабочих транков или паралельных каналов: " . $this->trunks);
+
+   			fwrite(STDOUT, PHP_EOL);
+
+        	$tf = new TableFormatter($this->colors);
+        	$tf->setBorder(' | '); // nice border between columns
+
+ 			$tf->setMaxWidth(120);
+
+	        // show a header
+	        echo $tf->format(
+	            ['*', '20%', '14%', '14%', '14%', '6%'],
+	            ['Список компаний', 'Направление', 'Всего', 'Завершено', 'Осталось', '']
+	        );
+
+	        // a line across the whole width
+	        echo str_pad('', $tf->getMaxWidth(), '-') . "\n";
+
+	        ksort($this->companies);
+
+			foreach ($this->companies as $name => $company) {
+
+				$remain = $company['count'] - $company['done'];
+				$progress = round($company['done'] * 100 / $company['count'], 0);
+
+				$ini = Yaml::parse($company['template']);
+				$direction = $ini['Context'] . ' [' . $ini['Extension'] . ']';
+
+				echo $tf->format(
+	                ['*', '20%', '14%', '14%', '14%', '6%'],
+	                [$name, $direction, $company['count'], $company['done'], $remain, "$progress%"],
+	                [Colors::C_CYAN, Colors::C_WHITE, Colors::C_WHITE, Colors::C_GREEN, Colors::C_RED, Colors::C_YELLOW]
+	            );
+
+	            if($remain === 0) {
+					$this->companies[$name]['is_over'] = 1;
+				}
+
+			}
+
+	    }
+
+	    public function template_call($name): string
+        {
+	    	return $this->template_path . $name . ".call";
+	    }
+
+	    public function temp_call($name, $phone): string
+        {
+	    	return $this->temp_path . $name . $phone . ".call";
+	    }
+
+	    public function pool_call($name, $phone): string
+        {
+	    	return $this->pool_path . $name . $phone . ".call";
+	    }
+
+	    public function done_path($filename): string
+        {
+	    	return $this->done_path . $filename;
+	    }
+
+	    // Смотрим какие звонки ушли из очереди
+	    public function harvest_info_pool(): void
+        {
+	    	foreach ($this->companies as $name => $company) {
+	    		foreach ($company['queue'] as $phone => $create) {
+    				if(!file_exists($this->pool_call($name, $phone))) {
+
+    					//$end = new DateTime('NOW');
+
+    					//$second = $end->getTimestamp() - strtotime($create);
+
+    					//$end = $end->format('Y-m-d H:i:s');
+
+    					//$cretae = gmdate("Y-m-d H:i:s", strtotime($create));
+
+    					//$line = "$phone: $create - $end ($seconds)";
+
+    					//$this->success($line);
+
+						//file_put_contents("data/companies/done/$name.txt", $line, FILE_APPEND | LOCK_EX);
+
+						unset($this->companies[$name]['queue'][$phone]);
+
+						$this->companies[$name]['length']--;
+						$this->companies[$name]['done']++;
+
+    				}	
+	    		}
+
+	    		// Если в очереди не осталось звонков и достигли конца компании, отменим компанию выполненной
+				if(!count($this->companies[$name]['queue']) && !$company['spl']->current()) {
+					//$this->info("Удалил компанию $name");
+					//unlink($company['spl']->getPathname());
+					//$this->companies[$name]['is_over'];
+				}
+
+	    	}
+	    }
+
+	   	public function c_run(Options $options): void
+        {
+
+	   		$this->c_list();
+
+			do {
+				$this->show_progress($options);
+
+				$this->harvest_info_pool();
+	   			$this->add_queue();
+
+	   			sleep(1);
+
+	   			$overs = array_sum(array_column($this->companies, "is_over"));
+	   		} while ($overs < count($this->companies));
+
+			fwrite(STDOUT, PHP_EOL);
+
+			$this->success('Обзвон законен!');
+
+	   	}
+
+	   	public function add_queue(): void
+        {
+
+			// Отсортируем компании по количеству активных звонков (в очереди)
+			uasort($this->companies, function($a, $b){
+			    return ($a['length'] - $b['length']);
+			});
+
+			foreach ($this->companies as $name => $company) {
+
+				$queue_length = array_sum(array_column($this->companies, "length"));
+
+				$free_calls = $this->trunks - $queue_length;
+
+				if(!$phone = $company['spl']->current()) {
+					continue;
+				}
+
+				$phone = trim($phone);
+
+				// Если есть окно, то добавляем еще звонок
+				if($free_calls && !file_exists($this->pool_call($name, $phone))) {
+
+					$call_file = str_replace("__number__", $phone, $company->template);
+
+					file_put_contents($this->temp_call($name, $phone), $call_file);
+					rename($this->temp_call($name, $phone), $this->pool_call($name, $phone));
+
+					$this->companies[$name]['queue'][$phone] = date('Y-m-d H:i:s');
+					$this->companies[$name]['length']++;
+
+					file_put_contents($this->done_path("$name.txt"), "$phone\n", FILE_APPEND | LOCK_EX);
+
+					$company['spl']->next();
+
+				}
+
+			}
+
+	   	}
+
+	}
+
+	// execute it
+	$cli = new Minimal();
+	$cli->run();
