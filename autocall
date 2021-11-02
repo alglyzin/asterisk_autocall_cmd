@@ -20,9 +20,9 @@
         public int $queue_size = 3;
         public string $template_path = 'data/templates/';
         public DateTime $start_time;
-        //public $pool_path = 'data/pool';
+        public $pool_path = 'data/pool';
         public string $log_path = 'data/logs/';
-        public string $pool_path = '/storage/usbdisk1/mikopbx/astspool/outgoing/';
+        //public string $pool_path = '/storage/usbdisk1/mikopbx/astspool/outgoing/';
         public string $temp_path = 'data/temp/';
         public string $done_path = 'data/companies/done/';
         
@@ -40,7 +40,7 @@
             $options->registerOption('wait', 'Пауза между звонками в рамках кампании, в секундах. Можно задать случайный интервал 30-300', 'w', 'string');
             $options->registerOption('queue_size', 'Максимальное количество звонков в процессе.', 'q', 'count');
         }
-    
+        
         /**
          * @param $name
          * @param $message
@@ -87,7 +87,7 @@
                 $count = $file->key();
                 $name = pathinfo($company, PATHINFO_FILENAME);
                 $basename = pathinfo($company, PATHINFO_BASENAME);
-
+                
                 $wait = $this->randWait();
                 
                 $this->companies[ $name ] = [
@@ -99,7 +99,7 @@
                     'length'    => 0,                  // Кол-во в процессе
                     'done'      => 0                   // Завершено
                 ];
-    
+                
                 $this->plog($name, "Устанавливаем таймаут для компании: $wait");
                 
                 if (file_exists($this->template_call($name))) {
@@ -137,7 +137,7 @@
                 fwrite(STDOUT, PHP_EOL);
                 $this->info("Кол-во рабочих транков или параллельных каналов: " . $this->trunks);
                 $this->info("Способ распределения очереди между кампаниями: " . $this->sequence);
-                $wait = implode('-', array_flip($this->wait));
+                $wait = implode('-', $this->wait);
                 $this->info("Интервал в секундах между звонками в кампании: $wait");
                 $this->info("Максимальное количество звонков в процессе: " . $this->queue_size);
                 fwrite(STDOUT, PHP_EOL);
@@ -228,13 +228,13 @@
         public function randWait(): int {
             return random_int($this->wait['from'], $this->wait['to']);
         }
-    
+        
         /**
          * @param Options $options
          */
         public function wait_init(Options $options): void
         {
-    
+            
             $wait = $options->getOpt('wait');
             
             if($wait !== false) {
@@ -245,7 +245,7 @@
                 }
                 
                 foreach ($interval as $opt) {
-                    if(!is_int($opt)) {
+                    if(!is_numeric($opt)) {
                         $this->error("Неверный формат интервала между звонками.");
                         echo $options->help();
                         Loop::stop();
@@ -264,9 +264,9 @@
             
             $sequence = $options->getOpt('sequence');
             $this->sequence = $sequence ?: $this->sequence;
-    
+            
             $this->wait_init($options);
- 
+            
             $queue_size = $options->getOpt('queue_size');
             $this->queue_size = $queue_size ?: $this->queue_size;
             
@@ -276,14 +276,14 @@
             
             $trunks = $options->getOpt('trunks');
             $this->trunks = $trunks ?: count($this->companies);
-
+            
             foreach ($this->companies as $name => $company) {
                 
                 $this->plog($name, "Добавил таймер обработки очереди компании: $name");
                 
                 $this->companies[ $name ][ 'timer_queue' ] = Loop::addPeriodicTimer(1, function () use ($name)
                 {
-
+                    
                     try {
                         // Отсортируем компании по количеству активных звонков (в очереди)
                         uasort($this->companies, static function ($a, $b)
@@ -319,7 +319,7 @@
             }
             
             // Запускаем обработку
-            Loop::addPeriodicTimer(0.5, function ()
+            Loop::addPeriodicTimer(0.9, function ()
             {
                 
                 $this->harvest_info_pool();
@@ -355,7 +355,7 @@
             
             // Если есть окно, то добавляем еще звонок
             if ($free_calls && !file_exists($this->pool_call($name, $phone))) {
-    
+                
                 $this->plog($name, "Добавляем звонок [$phone] в очередь");
                 
                 $call_file = str_replace("__number__", $phone, $this->companies[ $name ][ 'template' ]);
