@@ -20,9 +20,9 @@
         public int $queue_size = 3;
         public string $template_path = 'data/templates/';
         public DateTime $start_time;
-        public $pool_path = 'data/pool';
+        //public $pool_path = 'data/pool';
         public string $log_path = 'data/logs/';
-        //public string $pool_path = '/storage/usbdisk1/mikopbx/astspool/outgoing/';
+        public string $pool_path = '/storage/usbdisk1/mikopbx/astspool/outgoing/';
         public string $temp_path = 'data/temp/';
         public string $done_path = 'data/companies/done/';
         
