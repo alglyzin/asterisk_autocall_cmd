@@ -240,7 +240,11 @@
         public function log_path($name): string
         {
             $filename = $this->companies[ $name ][ 'log' ];
-            return $this->companies[ $name ][ 'dir' ] . "/logs/" . $filename;
+            $log_dir = $this->companies[ $name ][ 'dir' ] . "/logs";
+            if (!file_exists($log_dir) && !mkdir($log_dir, 0755, true) && !is_dir($log_dir)) {
+                throw new \RuntimeException(sprintf('Директория "%s" не может быть создана', $log_dir));
+            }
+            return "$log_dir/$filename";
         }
         
         // Смотрим какие звонки ушли из очереди
