@@ -20,7 +20,7 @@
         public string $trunk_mode = 'round';
         public int $queue_size = 3;
         public DateTime $start_time;
-        //public $pool_path = 'data/pool_test';
+        //public string $pool_path = 'data/pool_test/';
         public string $pool_path = '/storage/usbdisk1/mikopbx/astspool/outgoing/';
         
         /**
@@ -38,7 +38,7 @@
                 'Пауза между звонками в рамках кампании, в секундах. Можно задать случайный интервал 30-300', 'w',
                 'string');
             $options->registerOption('queue_size', 'Максимальное количество звонков в процессе.', 'q', 'count');
-            $options->registerOption('trunk_mode', 'Режим распредения транков (по кругу или случайно).', 'm', 'round|rand');
+            $options->registerOption('trunk_mode', 'Режим распределения транков (по кругу или случайно).', 'm', 'round|rand');
         }
         
         /**
@@ -154,9 +154,10 @@
                 fwrite(STDOUT, PHP_EOL);
                 $this->info("Кол-во рабочих транков или параллельных каналов: " . $this->trunks);
                 $this->info("Способ распределения очереди между кампаниями: " . $this->sequence);
+                $this->info("Способ распределения очереди между кампаниями: " . $this->sequence);
                 $wait = implode('-', $this->wait);
                 $this->info("Интервал в секундах между звонками в кампании: $wait");
-                $this->info("Максимальное количество звонков в процессе: " . $this->queue_size);
+                $this->info("Режим распределения транков: " . $this->trunk_mode);
                 fwrite(STDOUT, PHP_EOL);
                 $elapsed = $this->start_time->diff(new DateTime)->format('%h:%i:%s');
                 $this->alert("Прошло времени: $elapsed");
@@ -224,7 +225,7 @@
         
         public function temp_call($name, $phone): string
         {
-            return "/temporary/{$name}{$phone}.call";
+            return "data/temporary/{$name}{$phone}.call";
         }
         
         public function pool_call($name, $phone): string
@@ -368,7 +369,10 @@
             
             Loop::run();
         }
-        
+    
+        /**
+         * @throws Exception
+         */
         public function add_queue($name): void
         {
             if (!$phone = $this->companies[ $name ][ 'spl' ]->current()) {
@@ -391,8 +395,15 @@
                 $cafile = str_replace("__number__", $phone, $this->companies[ $name ][ 'template' ][ 'raw' ]);
                 $cafile = str_replace("__trunk__", $this->get_trunk($name), $cafile);
                 
-                file_put_contents($this->temp_call($name, $phone), $cafile);
-                rename($this->temp_call($name, $phone), $this->pool_call($name, $phone));
+                $path_temp = $this->temp_call($name, $phone);
+                if(file_put_contents($path_temp, $cafile) === false) {
+                    throw new Exception("Не смог сохранить временный файл по пути $path_temp");
+                }
+                
+                $path_pool = $this->pool_call($name, $phone);
+                if(rename($path_temp, $path_pool) === false) {
+                    throw new Exception("Не смог переместить временный файл по пути $path_pool");
+                }
                 
                 $time = date('Y-m-d H:i:s');
                 
