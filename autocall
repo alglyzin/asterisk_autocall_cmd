@@ -219,7 +219,8 @@
             }
             
             if ($mode === 'rand') {
-                return array_rand($this->companies[ $name ][ 'trunks' ]);
+                $rand_key = array_rand($this->companies[ $name ][ 'trunks' ]);
+                return  $this->companies[ $name ][ 'trunks' ][ $rand_key ];
             }
         }
         
@@ -257,6 +258,12 @@
                         unset($this->companies[ $name ][ 'queue' ][ $phone ]);
                         $this->companies[ $name ][ 'length' ]--;
                         $this->companies[ $name ][ 'done' ]++;
+    
+                        $message = "Звонок на $phone завершен. Активных звонков: " .
+                                   $this->companies[ $name ][ 'length' ];
+                        
+                        $this->plog($name, $message);
+                        
                     }
                 }
             }
@@ -339,9 +346,6 @@
                         
                         // Если с момента последнего прошло время либо еще не было ни одного звонка
                         if ($diff_sec >= $company[ 'wait' ] || empty($company[ 'last_call' ])) {
-                            $wait = $this->randWait();
-                            $this->plog($name, "Устанавливаем таймаут для компании: $wait");
-                            $this->companies[ $name ][ 'wait' ] = $wait;  // Задаем новую задержку
                             $this->add_queue($name);
                         }
                     } catch (Throwable $e) {
@@ -390,7 +394,12 @@
             
             // Если есть окно, то добавляем еще звонок
             if ($free_calls && !file_exists($this->pool_call($name, $phone))) {
-                $this->plog($name, "Добавляем звонок [$phone] в очередь");
+    
+                $wait = $this->randWait();
+                $message = "Добавляем звонок [$phone] в очередь\n";
+                $message .= "Устанавливаем таймаут до следующего звонка: $wait";
+                $this->plog($name, $message);
+                $this->companies[ $name ][ 'wait' ] = $wait;  // Задаем задержку до нового звонка
                 
                 $cafile = str_replace("__number__", $phone, $this->companies[ $name ][ 'template' ][ 'raw' ]);
                 $cafile = str_replace("__trunk__", $this->get_trunk($name), $cafile);
@@ -407,7 +416,7 @@
                 
                 $time = date('Y-m-d H:i:s');
                 
-                $this->companies[ $name ][ 'last_call' ] = $time; // Запоминаем время последнего звонка
+                $this->companies[ $name ][ 'last_call' ] = $time; // Запоминаем время создания звонка
                 $this->companies[ $name ][ 'queue' ][ $phone ] = $time;
                 $this->companies[ $name ][ 'length' ]++;
                 
