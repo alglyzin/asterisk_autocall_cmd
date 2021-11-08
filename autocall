@@ -274,7 +274,7 @@
                         $this->plog($name, $message);
                         
                         // Удалим
-                        unlink($this->pool_call_done($name, $phone));
+                        //unlink($this->pool_call_done($name, $phone));
                         
                     }
                 }
