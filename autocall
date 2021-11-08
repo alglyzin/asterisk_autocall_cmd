@@ -21,7 +21,8 @@
         public int $queue_size = 3;
         public DateTime $start_time;
         //public string $pool_path = 'data/pool_test/';
-        public string $pool_path = '/storage/usbdisk1/mikopbx/astspool/outgoing/';
+        public string $pool_path_out = '/storage/usbdisk1/mikopbx/astspool/outgoing/';
+        public string $pool_path_done = '/storage/usbdisk1/mikopbx/astspool/outgoing_done/';
         
         /**
          * register options and arguments
@@ -233,7 +234,12 @@
         
         public function pool_call($name, $phone): string
         {
-            return $this->pool_path . $name . $phone . ".call";
+            return $this->pool_path_out . $name . $phone . ".call";
+        }
+        
+        public function pool_call_done($name, $phone): string
+        {
+            return $this->pool_path_done . $name . $phone . ".call";
         }
         
         public function done_path($name): string
@@ -256,7 +262,8 @@
         {
             foreach ($this->companies as $name => $company) {
                 foreach ($company[ 'queue' ] as $phone => $create) {
-                    if (!file_exists($this->pool_call($name, $phone))) {
+                    if (!file_exists($this->pool_call($name, $phone)) && file_exists($this->pool_call_done($name, $phone))) {
+                        
                         unset($this->companies[ $name ][ 'queue' ][ $phone ]);
                         $this->companies[ $name ][ 'length' ]--;
                         $this->companies[ $name ][ 'done' ]++;
@@ -265,6 +272,9 @@
                                    $this->companies[ $name ][ 'length' ];
                         
                         $this->plog($name, $message);
+                        
+                        // Удалим
+                        unlink($this->pool_call_done($name, $phone));
                         
                     }
                 }
