@@ -47,7 +47,9 @@
          */
         public function plog($name, $message): void
         {
-            file_put_contents($this->log_path($name), $message, FILE_APPEND);
+            $time = date('Y-m-d H:i:s');
+            $message = "$time: $message";
+            file_put_contents($this->log_path($name), "$message\n", FILE_APPEND);
         }
         
         /**
@@ -396,9 +398,11 @@
             if ($free_calls && !file_exists($this->pool_call($name, $phone))) {
     
                 $wait = $this->randWait();
-                $message = "Добавляем звонок [$phone] в очередь\n";
-                $message .= "Устанавливаем таймаут до следующего звонка: $wait";
+                $message = "Добавляем звонок [$phone] в очередь";
                 $this->plog($name, $message);
+                $message = "Устанавливаем таймаут до следующего звонка: $wait";
+                $this->plog($name, $message);
+                
                 $this->companies[ $name ][ 'wait' ] = $wait;  // Задаем задержку до нового звонка
                 
                 $cafile = str_replace("__number__", $phone, $this->companies[ $name ][ 'template' ][ 'raw' ]);
