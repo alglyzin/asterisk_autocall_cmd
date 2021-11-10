@@ -39,7 +39,8 @@
                 'Пауза между звонками в рамках кампании, в секундах. Можно задать случайный интервал 30-300', 'w',
                 'string');
             $options->registerOption('queue_size', 'Максимальное количество звонков в процессе.', 'q', 'count');
-            $options->registerOption('trunk_mode', 'Режим распределения транков (по кругу или случайно).', 'm', 'round|rand');
+            $options->registerOption('trunk_mode', 'Режим распределения транков (по кругу или случайно).', 'm',
+                'round|rand');
         }
         
         /**
@@ -52,10 +53,11 @@
             $message = "$time: $message";
             file_put_contents($this->log_path($name), "$message\n", FILE_APPEND);
         }
-        
+    
         /**
          * implement your code
          * @param Options $options
+         * @throws Exception
          */
         protected function main(Options $options): void
         {
@@ -74,77 +76,92 @@
             }
         }
         
+        /**
+         * @throws Exception
+         */
         public function c_list(): void
         {
             $companies = glob(__DIR__ . "/data/companies/*", GLOB_ONLYDIR);
             
-            foreach ($companies as $dir_company) {
-                if (!file_exists("$dir_company/number.list")) {
-                    $this->error("Нашел папку компании " . basename($dir_company) . ", но в ней нет списка обзвона number.list");
-                    continue;
+            foreach ($companies as $dir) {
+                $name = basename($dir);
+                
+                if (!file_exists("$dir/number.list")) {
+                    $error = "Нашел папку компании " . basename($dir) .
+                             ", но в ней нет списка обзвона number.list";
+                    throw new Exception($error);
                 }
                 
-                $file = new SplFileObject("$dir_company/number.list", 'r');
+                $done_file = $this->splfile("$dir/finished.list");
+                $file = $this->splfile("$dir/number.list");
                 
-                $file->setFlags(SplFileObject::SKIP_EMPTY | SplFileObject::DROP_NEW_LINE);
-                
-                while ($file->current()) {
+                while ($phone = $file->current()) {
+                    if ($done_file->current()) {
+                        if ($phone !== $done_file->current()) {
+                            throw new Exception("Нарушена последовательность списка номеров и завершенных");
+                        }
+                        $done_file->next();
+                    }
                     $file->next();
                 }
                 
-                $count = $file->key();
-                $name = basename($dir_company);
                 $wait = $this->randWait();
                 
-                $this->plog($name, "Устанавливаем таймаут для компании: $wait");
+                $this->plog($name, "Устанавливаем таймаут: $wait");
                 
                 $this->companies[ $name ] = [
-                    'dir'      => $dir_company,
-                    'log'      => $name . "_" . date('Y-m-d_H:i:s') . ".log",
+                    'dir'      => $dir,
+                    'log'      => date('Y-m-d_H:i:s') . ".log",
                     'spl'      => $file,
-                    'wait'     => $wait,               // Текущая пауза в секундах
-                    'count'    => $count,              // Всего номеров в компании
-                    'queue'    => [],                  // В процессе
-                    'length'   => 0,                   // Кол-во в процессе
-                    'done'     => 0,                   // Завершено
+                    'spl_done' => $done_file,
+                    'wait'     => $wait,                                        // Текущая пауза в секундах
+                    'count'    => $file->key(),                                 // Всего номеров в компании
+                    'queue'    => [],                                           // В процессе
+                    'length'   => 0,                                            // Кол-во в процессе
+                    'done'     => $done_file->key(),                            // Завершено
                     'template' => [],
                 ];
                 
-                if (file_exists("$dir_company/trunks.list")) {
-                    $trunks = file("$dir_company/trunks.list", FILE_SKIP_EMPTY_LINES);
-                    $this->companies[ $name ][ 'trunks' ] = $trunks;
-                } else {
-                    $this->error("Для компании $name не нашел список транков или он пуст!");
-                    continue;
+                $file->seek($done_file->key());
+                
+                $trunks_path = "$dir/trunks.list";
+                
+                if (!file_exists($trunks_path)) {
+                    throw new Exception("Для компании $name не нашел список транков или он пуст!");
                 }
                 
-                if (file_exists("$dir_company/call_file.tpl")) {
-                    $cafile = file_get_contents("$dir_company/call_file.tpl");
-                    $this->companies[ $name ][ 'template' ][ 'raw' ] = $cafile;
-                    
-                    $ini = Yaml::parse($cafile);
-                    
-                    $this->companies[ $name ][ 'template' ][ 'direction' ] = $ini[ 'Context' ] . ' [' . $ini[ 'Extension' ] . ']';
-                    
-                    if (file_exists("$dir_company/finished.list")) {
-                        $done_file = new SplFileObject("$dir_company/finished.list", 'r');
-                        $done_file->setFlags(SplFileObject::SKIP_EMPTY | SplFileObject::DROP_NEW_LINE);
-                        while ($done_file->current()) {
-                            $done_file->next();
-                        }
-                        $diff = $done_file->key();
-                        $this->companies[ $name ][ 'done' ] = $diff;
-                        $file->seek($diff);
-                    } else {
-                        $file->rewind();
-                    }
-                } else {
-                    $this->error("Для компании $name не нашел шаблон Call файла!");
-                    continue;
+                $trunks = file($trunks_path, FILE_SKIP_EMPTY_LINES | FILE_IGNORE_NEW_LINES);
+                
+                if ($trunks === false) {
+                    throw new Exception("Не смог прочитать файл со списком транков $trunks_path");
                 }
                 
-                unset($file, $done_file);
+                $this->companies[ $name ][ 'trunks' ] = $trunks;
+                
+                $cafile_path = "$dir/call_file.tpl";
+                
+                if (!file_exists($cafile_path)) {
+                    throw new Exception("Для компании $name не нашел шаблон Call файла!");
+                }
+                
+                $cafile = file_get_contents($cafile_path);
+                $this->companies[ $name ][ 'template' ][ 'raw' ] = $cafile;
+                
+                $ini = Yaml::parse($cafile);
+                
+                $this->companies[ $name ][ 'template' ][ 'direction' ] = $ini[ 'Context' ] . ' [' . $ini[ 'Extension' ] . ']';
             }
+        }
+        
+        /**
+         * @param $path
+         * @return SplFileObject
+         */
+        public function splfile($path): SplFileObject
+        {
+            $file = new SplFileObject($path, 'a+');
+            $file->setFlags(SplFileObject::READ_AHEAD | SplFileObject::SKIP_EMPTY | SplFileObject::DROP_NEW_LINE);
+            return $file;
         }
         
         public function show_progress($is_update = true): void
@@ -157,9 +174,9 @@
                 fwrite(STDOUT, PHP_EOL);
                 $this->info("Кол-во рабочих транков или параллельных каналов: " . $this->trunks);
                 $this->info("Способ распределения очереди между кампаниями: " . $this->sequence);
-                $this->info("Способ распределения очереди между кампаниями: " . $this->sequence);
                 $wait = implode('-', $this->wait);
-                $this->info("Интервал в секундах между звонками в кампании: $wait");
+                $this->info("Интервал в секундах между звонками в кампаниях: $wait");
+                $this->info("Максимальное кол-во звонков в процессе на кампанию: " . $this->queue_size);
                 $this->info("Режим распределения транков: " . $this->trunk_mode);
                 fwrite(STDOUT, PHP_EOL);
                 $elapsed = $this->start_time->diff(new DateTime)->format('%h:%i:%s');
@@ -205,7 +222,7 @@
                 }
             }
         }
-    
+        
         /**
          * Извлекаем транк.
          * В зависимости от режиме либо по кругу либо случайный
@@ -223,7 +240,7 @@
             
             if ($mode === 'rand') {
                 $rand_key = array_rand($this->companies[ $name ][ 'trunks' ]);
-                return  $this->companies[ $name ][ 'trunks' ][ $rand_key ];
+                return $this->companies[ $name ][ 'trunks' ][ $rand_key ];
             }
         }
         
@@ -242,23 +259,37 @@
             return $this->pool_path_done . $name . $phone . ".call";
         }
         
-        public function done_path($name): string
+        /**
+         * @throws Exception
+         */
+        public function asterisk_cli_passthru($command): string
         {
-            return $this->companies[ $name ][ 'dir' ] . "/finished.list";
+            ob_start();
+            passthru("asterisk -rx '$command'", $b);
+            $out = ob_get_clean();
+            
+            if ($b !== 0) {
+                throw new Exception($out);
+            }
+            
+            return $out;
         }
         
+        /**
+         * @throws Exception
+         */
         public function log_path($name): string
         {
             $filename = $this->companies[ $name ][ 'log' ];
             $log_dir = $this->companies[ $name ][ 'dir' ] . "/logs";
             if (!file_exists($log_dir) && !mkdir($log_dir, 0755, true) && !is_dir($log_dir)) {
-                throw new \RuntimeException(sprintf('Директория "%s" не может быть создана', $log_dir));
+                throw new Exception(sprintf('Директория "%s" не может быть создана', $log_dir));
             }
             return "$log_dir/$filename";
         }
         
         // Смотрим какие звонки ушли из очереди
-    
+        
         /**
          * @throws Exception
          */
@@ -266,22 +297,21 @@
         {
             foreach ($this->companies as $name => $company) {
                 foreach ($company[ 'queue' ] as $phone => $create) {
-                    if (!file_exists($this->pool_call($name, $phone)) && file_exists($this->pool_call_done($name, $phone))) {
-                        
+                    if (!file_exists($this->pool_call($name, $phone)) && file_exists($this->pool_call_done($name,
+                            $phone))) {
                         unset($this->companies[ $name ][ 'queue' ][ $phone ]);
                         $this->companies[ $name ][ 'length' ]--;
                         $this->companies[ $name ][ 'done' ]++;
-    
+                        
                         $message = "Звонок на $phone завершен. Активных звонков: " .
                                    $this->companies[ $name ][ 'length' ];
                         
                         $this->plog($name, $message);
                         
                         // Удалим
-                        if(!unlink($this->pool_call_done($name, $phone))) {
+                        if (!unlink($this->pool_call_done($name, $phone))) {
                             throw new Exception("Не смогу удалить " . $this->pool_call_done($name, $phone));
                         }
-                        
                     }
                 }
             }
@@ -304,6 +334,9 @@
                 
                 if (count($interval) === 0) {
                     $this->error("Неверный формат интервала между звонками.");
+                    echo $options->help();
+                    Loop::stop();
+                    exit();
                 }
                 
                 foreach ($interval as $opt) {
@@ -324,7 +357,7 @@
         {
             $sequence = $options->getOpt('sequence');
             $this->sequence = $sequence ?: $this->sequence;
-    
+            
             $sequence = $options->getOpt('trunk_mode');
             $this->trunk_mode = $sequence ?: $this->trunk_mode;
             
@@ -341,7 +374,7 @@
             $this->trunks = $trunks ?: count($this->companies);
             
             foreach ($this->companies as $name => $company) {
-                $this->plog($name, "Добавил таймер обработки очереди компании: $name");
+                $this->plog($name, "Добавил таймер обработки очереди");
                 
                 $this->companies[ $name ][ 'timer_queue' ] = Loop::addPeriodicTimer(1, function () use ($name)
                 {
@@ -391,7 +424,7 @@
             
             Loop::run();
         }
-    
+        
         /**
          * @throws Exception
          */
@@ -412,7 +445,19 @@
             
             // Если есть окно, то добавляем еще звонок
             if ($free_calls && !file_exists($this->pool_call($name, $phone))) {
-    
+                
+                $trunk = $this->get_trunk($name);
+                
+                $out = $this->asterisk_cli_passthru('core show channels concise');
+                
+                $_trunk = explode('-', $trunk);
+                $_trunk = implode('-', [$_trunk[0], $_trunk[1]]);
+
+                if (strpos($out, $_trunk) !== false) {
+                    $this->plog($name, "Транк $trunk еще занят, пропустим добавление звонка.");
+                    return;
+                }
+                
                 $wait = $this->randWait();
                 $message = "Добавляем звонок [$phone] в очередь";
                 $this->plog($name, $message);
@@ -422,15 +467,15 @@
                 $this->companies[ $name ][ 'wait' ] = $wait;  // Задаем задержку до нового звонка
                 
                 $cafile = str_replace("__number__", $phone, $this->companies[ $name ][ 'template' ][ 'raw' ]);
-                $cafile = str_replace("__trunk__", $this->get_trunk($name), $cafile);
+                $cafile = str_replace("__trunk__", $trunk, $cafile);
                 
                 $path_temp = $this->temp_call($name, $phone);
-                if(file_put_contents($path_temp, $cafile) === false) {
+                if (file_put_contents($path_temp, $cafile) === false) {
                     throw new Exception("Не смог сохранить временный файл по пути $path_temp");
                 }
                 
                 $path_pool = $this->pool_call($name, $phone);
-                if(rename($path_temp, $path_pool) === false) {
+                if (rename($path_temp, $path_pool) === false) {
                     throw new Exception("Не смог переместить временный файл по пути $path_pool");
                 }
                 
@@ -440,9 +485,7 @@
                 $this->companies[ $name ][ 'queue' ][ $phone ] = $time;
                 $this->companies[ $name ][ 'length' ]++;
                 
-                file_put_contents($this->done_path($name), "$phone\n", FILE_APPEND | LOCK_EX);
-                
-                $this->companies[ $name ][ 'spl' ]->next();
+                $this->companies[ $name ][ 'spl_done' ]->fwrite($phone . PHP_EOL);
             }
         }
         
