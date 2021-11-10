@@ -258,6 +258,10 @@
         }
         
         // Смотрим какие звонки ушли из очереди
+    
+        /**
+         * @throws Exception
+         */
         public function harvest_info_pool(): void
         {
             foreach ($this->companies as $name => $company) {
@@ -274,7 +278,9 @@
                         $this->plog($name, $message);
                         
                         // Удалим
-                        unlink($this->pool_call_done($name, $phone));
+                        if(!unlink($this->pool_call_done($name, $phone))) {
+                            throw new Exception("Не смогу удалить " . $this->pool_call_done($name, $phone));
+                        }
                         
                     }
                 }
