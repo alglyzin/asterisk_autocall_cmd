@@ -32,11 +32,9 @@
             $options->registerCommand('run', 'Запустить обзвон');
             $options->registerCommand('list', 'Список компаний');
             $options->registerOption('wait',
-                'Пауза между звонками в рамках транка кампании, в секундах. Можно задать интервал 30-300', 'w',
+                'Пауза между звонками в рамках транка кампании, в секундах', 'w',
                 'string');
             $options->registerOption('queue_size', 'Максимальное количество звонков в процессе.', 'q', 'count');
-            $options->registerOption('trunk_mode', 'Режим распределения транков (по кругу или случайно).', 'm',
-                'round|rand');
             $options->registerOption('channels', 'Кол-во одновременных каналов транка.', 'c', 'count');
             $options->registerOption('is_debug', 'Режим отладки.', 'd', '1|0');
         }

@@ -10,25 +10,26 @@
 ```shell
 USAGE:
    autocall <OPTIONS> <COMMAND> ...
+
    Скрипт автообзвона для Asterisk от Asko.Host
 
+
 OPTIONS:
-   -t <count>, --trunks <count>                                Количество транков.
+   -w <string>, --wait <string>       Пауза между звонками в рамках транка кампании, в секундах
 
-   -s <own|evenly>, --sequence <own|evenly>                    Тип распределения по компаниям.
+   -q <count>, --queue_size <count>   Максимальное количество звонков в процессе.
 
-   -w <string>, --wait <string>                                Пауза между звонками в рамках кампании, в секундах. Можно задать случайный интервал 30-300
+   -c <count>, --channels <count>     Кол-во одновременных каналов транка.
 
-   -q <count>, --queue_size <count>                            Максимальное количество звонков в процессе.
+   -d <1|0>, --is_debug <1|0>         Режим отладки.
 
-   -m <round|rand>, --trunk_mode <round|rand>                  Режим распредения транков (по кругу или случайно).
+   -h, --help                         Display this help screen and exit immediately.
 
-   -h, --help                                                  Display this help screen and exit immediately.
+   --no-colors                        Do not use any colors in output. Useful when piping output to other tools or
+                                      files.
 
-   --no-colors                                                 Do not use any colors in output. Useful when piping output to other tools or files.
-
-   --loglevel <level>                                          Minimum level of messages to display. Default is info. Valid levels are: debug, info, notice, success, warning, error, critical, alert,
-                                                               emergency.
+   --loglevel <level>                 Minimum level of messages to display. Default is info. Valid levels are: debug,
+                                      info, notice, success, warning, error, critical, alert, emergency.
 
 
 COMMANDS:
