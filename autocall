@@ -58,19 +58,18 @@
          */
         protected function main(Options $options): void
         {
-    
             $wait = $options->getOpt('wait');
             $this->wait = $wait ?: $this->wait;
-    
+            
             $channels = $options->getOpt('channels');
             $this->channels = $channels ?: $this->channels;
-    
+            
             $queue_size = $options->getOpt('queue_size');
             $this->queue_size = $queue_size ?: $this->queue_size;
             
             $is_debug = $options->getOpt('is_debug');
             $this->is_debug = $is_debug ? (bool)$is_debug : $this->is_debug;
-
+            
             switch ($options->getCmd()) {
                 case 'run':
                     $this->c_run();
@@ -102,8 +101,12 @@
                     throw new Exception($error);
                 }
                 
+                $path_numbers = "$dir/number.list";
+                
+                $this->check_dublicate_numbers($name, $path_numbers);
+                
                 $done_file = $this->splfile("$dir/finished.list");
-                $file = $this->splfile("$dir/number.list");
+                $file = $this->splfile($path_numbers);
                 
                 while ($phone = $file->current()) {
                     if ($done_file->current()) {
@@ -179,7 +182,6 @@
         
         public function show_progress($is_update = true): void
         {
-    
             ob_implicit_flush(false);
             ob_start();
             
@@ -234,13 +236,13 @@
                     Loop::cancelTimer($this->companies[ $name ][ 'timer_queue' ]);
                 }
             }
-    
+            
             $out = ob_get_clean();
-    
+            
             if ($is_update) {
                 system('clear');
             }
-    
+            
             if ($is_update) {
                 fwrite(STDOUT, PHP_EOL);
                 $this->info("Интервал в секундах между звонками транка  : {$this->wait}");
@@ -250,11 +252,10 @@
                 $elapsed = $this->start_time->diff(new DateTime)->format('%h:%i:%s');
                 $this->alert("Прошло времени: $elapsed");
             }
-    
+            
             fwrite(STDOUT, PHP_EOL . $out);
-
         }
-    
+        
         /**
          * Свободно каналов для транка
          * @param $name
@@ -263,12 +264,13 @@
          */
         public function free_channel($name, $trunk): int
         {
-            $queue = $this->companies[$name]['queue'];
-            return array_reduce($queue, static function($carry, $_trunk) use ($trunk) {
+            $queue = $this->companies[ $name ][ 'queue' ];
+            return array_reduce($queue, static function ($carry, $_trunk) use ($trunk)
+            {
                 return $_trunk === $trunk ? $carry - 1 : $carry;
             }, $this->channels);
         }
-    
+        
         /**
          * Извлекаем транк.
          * В зависимости от режима либо по кругу, либо случайный
@@ -284,7 +286,7 @@
             // Неважно извлечем мы транк для работы или нет, перемещаем его в конец очереди
             $future_time = array_shift($this->companies[ $name ][ 'trunks' ]);
             $this->companies[ $name ][ 'trunks' ][ $trunk ] = $future_time;
-    
+            
             $free_channel = $this->free_channel($name, $trunk);
             // Когда достаточно свободных каналов транка и пауза прошла
             if ($free_channel > 0 && date_create($future_time) <= date_create()) {
@@ -315,7 +317,7 @@
         public function pool_call($name, $phone): string
         {
             $filename = $name . $phone . ".call";
-            if($this->is_debug) {
+            if ($this->is_debug) {
                 return "data/pool_out/$filename";
             }
             return $this->pool_path_out . $filename;
@@ -324,10 +326,25 @@
         public function pool_call_done($name, $phone): string
         {
             $filename = $name . $phone . ".call";
-            if($this->is_debug) {
+            if ($this->is_debug) {
                 return "data/pool_done/$filename";
             }
             return $this->pool_path_done . $filename;
+        }
+    
+        /**
+         * @throws Exception
+         */
+        public function call_cli($command) {
+            ob_start();
+            passthru($command, $b);
+            $out = ob_get_clean();
+            
+            if ($b !== 0) {
+                throw new Exception($out);
+            }
+            
+            return $out;
         }
         
         /**
@@ -335,12 +352,25 @@
          */
         public function asterisk_cli_passthru($command): string
         {
-            ob_start();
-            passthru("asterisk -rx '$command'", $b);
-            $out = ob_get_clean();
+            return $this->call_cli("asterisk -rx '$command'");
+        }
+        
+        /**
+         * Проверяем нет ли дубликатов телефонов в файле
+         * @throws Exception
+         */
+        public function check_dublicate_numbers($name, $path): string
+        {
             
-            if ($b !== 0) {
-                throw new Exception($out);
+            $out = $this->call_cli("sort $path | uniq -dc");
+
+            if(!empty($out)) {
+                $this->warning("В кампании $name есть дубликаты номеров, удалить их (y|n)?");
+                $confirm = fgets(STDIN);
+
+                if(trim($confirm) === 'y') {
+                    $this->call_cli("sort -u -o $path $path");
+                }
             }
             
             return $out;
@@ -382,9 +412,11 @@
          */
         public function id_done_call($name, $phone, $trunk): bool
         {
+            // Так как call файл может быть удален или перемещен не нами, очистим кеш
+            clearstatcache();
             return !file_exists($this->pool_call($name, $phone)) &&         // Если удален call файл
-                   file_exists($this->pool_call_done($name, $phone));    // Если создан call файл
-                   /*!$this->is_active_trunk($trunk);*/                         // Если нет активности транка
+                   file_exists($this->pool_call_done($name, $phone)) &&     // Если создан call файл
+                   !$this->is_active_trunk($trunk);                         // Если нет активности транка
         }
         
         /**
@@ -449,9 +481,9 @@
                         }
                         
                         $free_calls = $this->queue_size - $this->size_queue($name);
-                        
+
                         // Если есть окно, то добавляем еще звонок
-                        if ($free_calls > 0 && !file_exists($this->pool_call($name, trim($phone)))) {
+                        if ($free_calls > 0) {
                             $trunk = $this->get_trunk($name);
                             
                             // Если нет свободного транка с вышедшей паузой, пропустим
@@ -472,31 +504,37 @@
             // Запускаем обработку
             Loop::addPeriodicTimer(0.8, function ()
             {
-                $this->harvest_info_pool();
-                $this->show_progress();
-                
-                $overs = array_sum(array_column($this->companies, "is_over"));
-                
-                if ($overs === count($this->companies)) {
-                    fwrite(STDOUT, PHP_EOL);
-                    $this->success('Обзвон законен!');
+                try {
+                    $this->harvest_info_pool();
+                    $this->show_progress();
+                    
+                    $overs = array_sum(array_column($this->companies, "is_over"));
+                    
+                    if ($overs === count($this->companies)) {
+                        fwrite(STDOUT, PHP_EOL);
+                        $this->success('Обзвон законен!');
+                        Loop::stop();
+                    }
+                } catch (Throwable $e) {
+                    $this->error($e->getMessage());
                     Loop::stop();
                 }
             });
-    
-            Loop::addSignal(SIGINT, function (int $signal) {
+            
+            Loop::addSignal(SIGINT, function (int $signal)
+            {
                 fprintf(STDOUT, "\033[?25h"); //show cursor
                 Loop::stop();
             });
             
-            register_shutdown_function(static function() {
+            register_shutdown_function(static function ()
+            {
                 fprintf(STDOUT, "\033[?25h"); //show cursor
             });
-    
+            
             fprintf(STDOUT, "\033[?25l"); // hide cursor
             
             Loop::run();
-
         }
         
         /**
