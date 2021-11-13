@@ -383,8 +383,8 @@
         public function id_done_call($name, $phone, $trunk): bool
         {
             return !file_exists($this->pool_call($name, $phone)) &&         // Если удален call файл
-                   file_exists($this->pool_call_done($name, $phone)) &&     // Если создан call файл
-                   !$this->is_active_trunk($trunk);                         // Если нет активности транка
+                   file_exists($this->pool_call_done($name, $phone));    // Если создан call файл
+                   /*!$this->is_active_trunk($trunk);*/                         // Если нет активности транка
         }
         
         /**
@@ -521,8 +521,6 @@
             }
             
             $this->companies[ $name ][ 'queue' ][ $phone ] = $trunk;
-            $this->companies[ $name ][ 'length' ]++;
-            
             $this->companies[ $name ][ 'spl_done' ]->fwrite($phone . PHP_EOL);
             $this->companies[ $name ][ 'spl' ]->next();
         }
