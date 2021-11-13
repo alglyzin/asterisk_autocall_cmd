@@ -14,13 +14,11 @@
     {
         
         public array $companies = [];
-        public int $trunks;
-        public array $wait = ['from' => 1, 'to' => 1];
-        public string $sequence = 'evenly';
-        public string $trunk_mode = 'round';
+        public int $wait = 1;
+        public int $channels = 1;
         public int $queue_size = 3;
         public DateTime $start_time;
-        //public string $pool_path = 'data/pool_test/';
+        public bool $is_debug = false;
         public string $pool_path_out = '/storage/usbdisk1/mikopbx/astspool/outgoing/';
         public string $pool_path_done = '/storage/usbdisk1/mikopbx/astspool/outgoing_done/';
         
@@ -33,19 +31,20 @@
             $options->setHelp('Скрипт автообзвона для Asterisk от Asko.Host');
             $options->registerCommand('run', 'Запустить обзвон');
             $options->registerCommand('list', 'Список компаний');
-            $options->registerOption('trunks', 'Количество транков.', 't', 'count');
-            $options->registerOption('sequence', 'Тип распределения по компаниям.', 's', 'own|evenly');
             $options->registerOption('wait',
-                'Пауза между звонками в рамках кампании, в секундах. Можно задать случайный интервал 30-300', 'w',
+                'Пауза между звонками в рамках транка кампании, в секундах. Можно задать интервал 30-300', 'w',
                 'string');
             $options->registerOption('queue_size', 'Максимальное количество звонков в процессе.', 'q', 'count');
             $options->registerOption('trunk_mode', 'Режим распределения транков (по кругу или случайно).', 'm',
                 'round|rand');
+            $options->registerOption('channels', 'Кол-во одновременных каналов транка.', 'c', 'count');
+            $options->registerOption('is_debug', 'Режим отладки.', 'd', '1|0');
         }
         
         /**
          * @param $name
          * @param $message
+         * @throws Exception
          */
         public function plog($name, $message): void
         {
@@ -53,7 +52,7 @@
             $message = "$time: $message";
             file_put_contents($this->log_path($name), "$message\n", FILE_APPEND);
         }
-    
+        
         /**
          * implement your code
          * @param Options $options
@@ -61,9 +60,22 @@
          */
         protected function main(Options $options): void
         {
+    
+            $wait = $options->getOpt('wait');
+            $this->wait = $wait ?: $this->wait;
+    
+            $channels = $options->getOpt('channels');
+            $this->channels = $channels ?: $this->channels;
+    
+            $queue_size = $options->getOpt('queue_size');
+            $this->queue_size = $queue_size ?: $this->queue_size;
+            
+            $is_debug = $options->getOpt('is_debug');
+            $this->is_debug = $is_debug ? (bool)$is_debug : $this->is_debug;
+
             switch ($options->getCmd()) {
                 case 'run':
-                    $this->c_run($options);
+                    $this->c_run();
                     break;
                 case 'list':
                     $this->c_list();
@@ -105,19 +117,14 @@
                     $file->next();
                 }
                 
-                $wait = $this->randWait();
-                
-                $this->plog($name, "Устанавливаем таймаут: $wait");
-                
                 $this->companies[ $name ] = [
+                    'name'     => $name,
                     'dir'      => $dir,
                     'log'      => date('Y-m-d_H:i:s') . ".log",
                     'spl'      => $file,
-                    'spl_done' => $done_file,
-                    'wait'     => $wait,                                        // Текущая пауза в секундах
+                    'spl_done' => $done_file,                                   // Текущая пауза в секундах
                     'count'    => $file->key(),                                 // Всего номеров в компании
                     'queue'    => [],                                           // В процессе
-                    'length'   => 0,                                            // Кол-во в процессе
                     'done'     => $done_file->key(),                            // Завершено
                     'template' => [],
                 ];
@@ -127,7 +134,7 @@
                 $trunks_path = "$dir/trunks.list";
                 
                 if (!file_exists($trunks_path)) {
-                    throw new Exception("Для компании $name не нашел список транков или он пуст!");
+                    throw new Exception("Для компании $name не нашел список транков");
                 }
                 
                 $trunks = file($trunks_path, FILE_SKIP_EMPTY_LINES | FILE_IGNORE_NEW_LINES);
@@ -136,6 +143,14 @@
                     throw new Exception("Не смог прочитать файл со списком транков $trunks_path");
                 }
                 
+                if (!count($trunks)) {
+                    throw new Exception("В списке транков должен быть хотя бы один транк");
+                }
+                
+                // Делаем транки ключами
+                $trunks = array_flip($trunks);
+                // Задаем всем транкам текущее время
+                $trunks = array_map(static fn() => date('Y-m-d H:i:s'), $trunks);
                 $this->companies[ $name ][ 'trunks' ] = $trunks;
                 
                 $cafile_path = "$dir/call_file.tpl";
@@ -166,24 +181,9 @@
         
         public function show_progress($is_update = true): void
         {
-            if ($is_update) {
-                system('clear');
-            }
-            
-            if ($is_update) {
-                fwrite(STDOUT, PHP_EOL);
-                $this->info("Кол-во рабочих транков или параллельных каналов: " . $this->trunks);
-                $this->info("Способ распределения очереди между кампаниями: " . $this->sequence);
-                $wait = implode('-', $this->wait);
-                $this->info("Интервал в секундах между звонками в кампаниях: $wait");
-                $this->info("Максимальное кол-во звонков в процессе на кампанию: " . $this->queue_size);
-                $this->info("Режим распределения транков: " . $this->trunk_mode);
-                fwrite(STDOUT, PHP_EOL);
-                $elapsed = $this->start_time->diff(new DateTime)->format('%h:%i:%s');
-                $this->alert("Прошло времени: $elapsed");
-            }
-            
-            fwrite(STDOUT, PHP_EOL);
+    
+            ob_implicit_flush(false);
+            ob_start();
             
             $tf = new TableFormatter($this->colors);
             $tf->setBorder(' | '); // nice border between columns
@@ -192,8 +192,8 @@
             
             // show a header
             echo $tf->format(
-                ['*', '20%', '14%', '14%', '14%', '6%'],
-                ['Список компаний', 'Направление', 'Всего', 'Завершено', 'Осталось', '']
+                ['*', '20%', '13%', '12%', '12%', '12%', '6%'],
+                ['Список компаний', 'Направление', 'Всего номеров', 'В процессе', 'Завершено', 'Осталось', '']
             );
             
             // a line across the whole width
@@ -204,13 +204,28 @@
             foreach ($this->companies as $name => $company) {
                 $remain = $company[ 'count' ] - $company[ 'done' ];
                 $progress = round($company[ 'done' ] * 100 / $company[ 'count' ]);
-                
                 $direction = $company[ 'template' ][ 'direction' ];
                 
                 echo $tf->format(
-                    ['*', '20%', '14%', '14%', '14%', '6%'],
-                    [$name, $direction, $company[ 'count' ], $company[ 'done' ], $remain, "$progress%"],
-                    [Colors::C_CYAN, Colors::C_WHITE, Colors::C_WHITE, Colors::C_GREEN, Colors::C_RED, Colors::C_YELLOW]
+                    ['*', '20%', '12%', '12%', '12%', '12%', '6%'],
+                    [
+                        $name,
+                        $direction,
+                        $company[ 'count' ],
+                        $this->size_queue($name),
+                        $company[ 'done' ],
+                        $remain,
+                        $progress . '%'
+                    ],
+                    [
+                        Colors::C_CYAN,
+                        Colors::C_WHITE,
+                        Colors::C_WHITE,
+                        Colors::C_BLUE,
+                        Colors::C_GREEN,
+                        Colors::C_RED,
+                        Colors::C_YELLOW
+                    ]
                 );
                 
                 // todo:: Убрать контроль окончания кампании из вывода прогресса
@@ -221,27 +236,77 @@
                     Loop::cancelTimer($this->companies[ $name ][ 'timer_queue' ]);
                 }
             }
+    
+            $out = ob_get_clean();
+    
+            if ($is_update) {
+                system('clear');
+            }
+    
+            if ($is_update) {
+                fwrite(STDOUT, PHP_EOL);
+                $this->info("Интервал в секундах между звонками транка  : {$this->wait}");
+                $this->info("Максимальное кол-во одновременных вызовов  : " . $this->queue_size);
+                $this->info("Кол-во одновременных каналов одного транка : " . $this->channels);
+                fwrite(STDOUT, PHP_EOL);
+                $elapsed = $this->start_time->diff(new DateTime)->format('%h:%i:%s');
+                $this->alert("Прошло времени: $elapsed");
+            }
+    
+            fwrite(STDOUT, PHP_EOL . $out);
+
         }
-        
+    
+        /**
+         * Свободно каналов для транка
+         * @param $name
+         * @param $trunk
+         * @return int
+         */
+        public function free_channel($name, $trunk): int
+        {
+            $queue = $this->companies[$name]['queue'];
+            return array_reduce($queue, static function($carry, $_trunk) use ($trunk) {
+                return $_trunk === $trunk ? $carry - 1 : $carry;
+            }, $this->channels);
+        }
+    
         /**
          * Извлекаем транк.
-         * В зависимости от режиме либо по кругу либо случайный
+         * В зависимости от режима либо по кругу, либо случайный
+         * Та же учитываем паузу и время последнего завершенного звонка
          * @param        $name
-         * @param string $mode
-         * @return mixed
+         * @return false|string
+         * @throws Exception
          */
-        public function get_trunk($name, string $mode = 'round')
+        public function get_trunk($name)
         {
-            if ($mode === 'round') {
-                $trunk = array_shift($this->companies[ $name ][ 'trunks' ]);
-                $this->companies[ $name ][ 'trunks' ][] = $trunk;
+            $trunk = array_key_first($this->companies[ $name ][ 'trunks' ]);
+            
+            // Неважно извлечем мы транк для работы или нет, перемещаем его в конец очереди
+            $future_time = array_shift($this->companies[ $name ][ 'trunks' ]);
+            $this->companies[ $name ][ 'trunks' ][ $trunk ] = $future_time;
+    
+            $free_channel = $this->free_channel($name, $trunk);
+            // Когда достаточно свободных каналов транка и пауза прошла
+            if ($free_channel > 0 && date_create($future_time) <= date_create()) {
                 return $trunk;
             }
             
-            if ($mode === 'rand') {
-                $rand_key = array_rand($this->companies[ $name ][ 'trunks' ]);
-                return $this->companies[ $name ][ 'trunks' ][ $rand_key ];
-            }
+            return false;
+        }
+        
+        /**
+         * Возвращаем время в будущем на основании заданной паузы
+         */
+        public function future_time(): string
+        {
+            $sec = $this->wait;
+            $time = new DateTime();
+            $interval = new DateInterval("PT{$sec}S");
+            $time->add($interval);
+            
+            return $time->format('Y-m-d H:i:s');
         }
         
         public function temp_call($name, $phone): string
@@ -251,12 +316,20 @@
         
         public function pool_call($name, $phone): string
         {
-            return $this->pool_path_out . $name . $phone . ".call";
+            $filename = $name . $phone . ".call";
+            if($this->is_debug) {
+                return "data/pool_out/$filename";
+            }
+            return $this->pool_path_out . $filename;
         }
         
         public function pool_call_done($name, $phone): string
         {
-            return $this->pool_path_done . $name . $phone . ".call";
+            $filename = $name . $phone . ".call";
+            if($this->is_debug) {
+                return "data/pool_done/$filename";
+            }
+            return $this->pool_path_done . $filename;
         }
         
         /**
@@ -288,7 +361,33 @@
             return "$log_dir/$filename";
         }
         
+        /**
+         * Проверяем активность транка на текущий момент
+         * @param $trunk
+         * @return bool
+         * @throws Exception
+         */
+        public function is_active_trunk($trunk): bool
+        {
+            $out = $this->asterisk_cli_passthru('core show channels concise');
+            
+            $trunk = explode('-', $trunk);
+            $trunk = implode('-', [$trunk[ 0 ], $trunk[ 1 ]]);
+            
+            return strpos($out, $trunk) !== false;
+        }
+        
         // Смотрим какие звонки ушли из очереди
+        
+        /**
+         * @throws Exception
+         */
+        public function id_done_call($name, $phone, $trunk): bool
+        {
+            return !file_exists($this->pool_call($name, $phone)) &&         // Если удален call файл
+                   file_exists($this->pool_call_done($name, $phone)) &&     // Если создан call файл
+                   !$this->is_active_trunk($trunk);                         // Если нет активности транка
+        }
         
         /**
          * @throws Exception
@@ -296,17 +395,22 @@
         public function harvest_info_pool(): void
         {
             foreach ($this->companies as $name => $company) {
-                foreach ($company[ 'queue' ] as $phone => $create) {
-                    if (!file_exists($this->pool_call($name, $phone)) && file_exists($this->pool_call_done($name,
-                            $phone))) {
+                foreach ($company[ 'queue' ] as $phone => $trunk) {
+                    if ($this->id_done_call($name, $phone, $trunk)) {
                         unset($this->companies[ $name ][ 'queue' ][ $phone ]);
-                        $this->companies[ $name ][ 'length' ]--;
                         $this->companies[ $name ][ 'done' ]++;
                         
-                        $message = "Звонок на $phone завершен. Активных звонков: " .
-                                   $this->companies[ $name ][ 'length' ];
+                        $future_time = $this->future_time();
                         
+                        $message = "Звонок на $phone через $trunk завершен. ";
                         $this->plog($name, $message);
+                        $message = "Активных звонков: " . $this->size_queue($name);
+                        $this->plog($name, $message);
+                        $message = "Следующий звонок через $trunk возможен после : $future_time";
+                        $this->plog($name, $message);
+                        
+                        // После завершения звонка назначим транку новую паузу (дату в будущем)
+                        $this->companies[ $name ][ 'trunks' ][ $trunk ] = $future_time;
                         
                         // Удалим
                         if (!unlink($this->pool_call_done($name, $phone))) {
@@ -317,61 +421,24 @@
             }
         }
         
-        public function randWait(): int
+        /**
+         * Количество звонков в процессе
+         * @param $name
+         * @return int
+         */
+        public function size_queue($name): int
         {
-            return random_int($this->wait[ 'from' ], $this->wait[ 'to' ]);
+            return count($this->companies[ $name ][ "queue" ]);
         }
         
         /**
-         * @param Options $options
+         * @throws Exception
          */
-        public function wait_init(Options $options): void
+        public function c_run(): void
         {
-            $wait = $options->getOpt('wait');
-            
-            if ($wait !== false) {
-                $interval = explode('-', $wait);
-                
-                if (count($interval) === 0) {
-                    $this->error("Неверный формат интервала между звонками.");
-                    echo $options->help();
-                    Loop::stop();
-                    exit();
-                }
-                
-                foreach ($interval as $opt) {
-                    if (!is_numeric($opt)) {
-                        $this->error("Неверный формат интервала между звонками.");
-                        echo $options->help();
-                        Loop::stop();
-                        exit();
-                    }
-                }
-            }
-            
-            $this->wait[ 'from' ] = $interval[ 0 ] ?? $this->wait[ 'from' ];
-            $this->wait[ 'to' ] = $interval[ 1 ] ?? $this->wait[ 'from' ];
-        }
-        
-        public function c_run(Options $options): void
-        {
-            $sequence = $options->getOpt('sequence');
-            $this->sequence = $sequence ?: $this->sequence;
-            
-            $sequence = $options->getOpt('trunk_mode');
-            $this->trunk_mode = $sequence ?: $this->trunk_mode;
-            
-            $this->wait_init($options);
-            
-            $queue_size = $options->getOpt('queue_size');
-            $this->queue_size = $queue_size ?: $this->queue_size;
-            
             $this->start_time = new DateTime();
             
             $this->c_list();
-            
-            $trunks = $options->getOpt('trunks');
-            $this->trunks = $trunks ?: count($this->companies);
             
             foreach ($this->companies as $name => $company) {
                 $this->plog($name, "Добавил таймер обработки очереди");
@@ -379,25 +446,22 @@
                 $this->companies[ $name ][ 'timer_queue' ] = Loop::addPeriodicTimer(1, function () use ($name)
                 {
                     try {
-                        // Отсортируем компании по количеству активных звонков (в очереди)
-                        uasort($this->companies, static function ($a, $b)
-                        {
-                            return ($a[ 'length' ] - $b[ 'length' ]);
-                        });
-                        
-                        // если включена опция evenly и у текущей компании не меньше всего звонков в очереди
-                        if ($this->sequence === 'evenly' && array_key_first($this->companies) !== $name) {
+                        if (!$phone = $this->companies[ $name ][ 'spl' ]->current()) {
                             return;
                         }
                         
-                        $last_call = $this->companies[ $name ][ 'last_call' ] ?? date('Y-m-d H:i:s');
-                        $diff_sec = abs(strtotime($last_call) - time());
+                        $free_calls = $this->queue_size - $this->size_queue($name);
                         
-                        $company = $this->companies[ $name ];
-                        
-                        // Если с момента последнего прошло время либо еще не было ни одного звонка
-                        if ($diff_sec >= $company[ 'wait' ] || empty($company[ 'last_call' ])) {
-                            $this->add_queue($name);
+                        // Если есть окно, то добавляем еще звонок
+                        if ($free_calls > 0 && !file_exists($this->pool_call($name, trim($phone)))) {
+                            $trunk = $this->get_trunk($name);
+                            
+                            // Если нет свободного транка с вышедшей паузой, пропустим
+                            if ($trunk === false) {
+                                return;
+                            }
+                            
+                            $this->add_queue($name, $phone, $trunk);
                         }
                     } catch (Throwable $e) {
                         $this->error($e->getMessage());
@@ -408,7 +472,7 @@
             }
             
             // Запускаем обработку
-            Loop::addPeriodicTimer(0.9, function ()
+            Loop::addPeriodicTimer(0.8, function ()
             {
                 $this->harvest_info_pool();
                 $this->show_progress();
@@ -421,72 +485,48 @@
                     Loop::stop();
                 }
             });
+    
+            Loop::addSignal(SIGINT, function (int $signal) {
+                fprintf(STDOUT, "\033[?25h"); //show cursor
+                Loop::stop();
+            });
+            
+            register_shutdown_function(static function() {
+                fprintf(STDOUT, "\033[?25h"); //show cursor
+            });
+    
+            fprintf(STDOUT, "\033[?25l"); // hide cursor
             
             Loop::run();
+
         }
         
         /**
          * @throws Exception
          */
-        public function add_queue($name): void
+        public function add_queue($name, $phone, $trunk): void
         {
-            if (!$phone = $this->companies[ $name ][ 'spl' ]->current()) {
-                return;
+            $message = "Добавляем звонок [$phone] в очередь";
+            $this->plog($name, $message);
+            
+            $cafile = str_replace("__number__", $phone, $this->companies[ $name ][ 'template' ][ 'raw' ]);
+            $cafile = str_replace("__trunk__", $trunk, $cafile);
+            
+            $path_temp = $this->temp_call($name, $phone);
+            if (file_put_contents($path_temp, $cafile) === false) {
+                throw new Exception("Не смог сохранить временный файл по пути $path_temp");
             }
             
-            if ($this->sequence === 'own') {
-                $free_calls = $this->queue_size - $this->companies[ $name ][ "length" ];
-            } else {
-                $length = array_sum(array_column($this->companies, "length"));
-                $free_calls = $this->trunks - $length;
+            $path_pool = $this->pool_call($name, $phone);
+            if (rename($path_temp, $path_pool) === false) {
+                throw new Exception("Не смог переместить временный файл по пути $path_pool");
             }
             
-            $phone = trim($phone);
+            $this->companies[ $name ][ 'queue' ][ $phone ] = $trunk;
+            $this->companies[ $name ][ 'length' ]++;
             
-            // Если есть окно, то добавляем еще звонок
-            if ($free_calls && !file_exists($this->pool_call($name, $phone))) {
-                
-                $trunk = $this->get_trunk($name);
-                
-                $out = $this->asterisk_cli_passthru('core show channels concise');
-                
-                $_trunk = explode('-', $trunk);
-                $_trunk = implode('-', [$_trunk[0], $_trunk[1]]);
-
-                if (strpos($out, $_trunk) !== false) {
-                    $this->plog($name, "Транк $trunk еще занят, пропустим добавление звонка.");
-                    return;
-                }
-                
-                $wait = $this->randWait();
-                $message = "Добавляем звонок [$phone] в очередь";
-                $this->plog($name, $message);
-                $message = "Устанавливаем таймаут до следующего звонка: $wait";
-                $this->plog($name, $message);
-                
-                $this->companies[ $name ][ 'wait' ] = $wait;  // Задаем задержку до нового звонка
-                
-                $cafile = str_replace("__number__", $phone, $this->companies[ $name ][ 'template' ][ 'raw' ]);
-                $cafile = str_replace("__trunk__", $trunk, $cafile);
-                
-                $path_temp = $this->temp_call($name, $phone);
-                if (file_put_contents($path_temp, $cafile) === false) {
-                    throw new Exception("Не смог сохранить временный файл по пути $path_temp");
-                }
-                
-                $path_pool = $this->pool_call($name, $phone);
-                if (rename($path_temp, $path_pool) === false) {
-                    throw new Exception("Не смог переместить временный файл по пути $path_pool");
-                }
-                
-                $time = date('Y-m-d H:i:s');
-                
-                $this->companies[ $name ][ 'last_call' ] = $time; // Запоминаем время создания звонка
-                $this->companies[ $name ][ 'queue' ][ $phone ] = $time;
-                $this->companies[ $name ][ 'length' ]++;
-                
-                $this->companies[ $name ][ 'spl_done' ]->fwrite($phone . PHP_EOL);
-            }
+            $this->companies[ $name ][ 'spl_done' ]->fwrite($phone . PHP_EOL);
+            $this->companies[ $name ][ 'spl' ]->next();
         }
         
     }
