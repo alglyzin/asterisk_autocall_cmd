@@ -108,7 +108,8 @@
                 $done_file = $this->splfile("$dir/finished.list");
                 $file = $this->splfile($path_numbers);
                 
-                while ($phone = $file->current()) {
+                // todo: Нелья проверять последовательность так как в finished.list номера могут попадать в другой
+                /*while ($phone = $file->current()) {
                     if ($done_file->current()) {
                         if ($phone !== $done_file->current()) {
                             throw new Exception("Нарушена последовательность списка номеров и завершенных");
@@ -116,7 +117,7 @@
                         $done_file->next();
                     }
                     $file->next();
-                }
+                }*/
                 
                 $this->companies[ $name ] = [
                     'name'     => $name,
